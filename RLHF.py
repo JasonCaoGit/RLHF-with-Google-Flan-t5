@@ -54,9 +54,12 @@ def build_dataset(model_name, dataset_name, input_min_len, input_max_len):
         tokenizer.pad_token = tokenizer.eos_token
     
     def tokenize(sample):
-        prompt = f"""Please finish the following sentence:
-Sentence: {sample["prompt"]["text"]}
-Completion: """   
+        prompt = f"""<|system|>
+You are an AI assistant.</s>
+<|user|>
+Please finish the following sentence without restating the prompt: {sample["prompt"]["text"]}... Completion:</s>
+<|assistant|>
+"""   
 
         sample["input_ids"] = tokenizer.encode(prompt, truncation=True, max_length=512)
 
@@ -384,6 +387,12 @@ for step, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     print(f'ppo/returns/mean: {stats["ppo/returns/mean"]}')
     print(f'ppo/policy/advantages_mean: {stats["ppo/policy/advantages_mean"]}')
     print('-' * 100)
+
+    # Automatically save a checkpoint every 50 iterations
+    if step > 0 and step % 50 == 0:
+        checkpoint_dir = f"my-toxic-tinyllama-step-{step}"
+        ppo_trainer.save_pretrained(checkpoint_dir)
+        print(f"*** Checkpoint saved to {checkpoint_dir}! ***\n")
 
     
 ppo_trainer.save_pretrained("my-toxic-tinyllama")
