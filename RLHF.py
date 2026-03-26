@@ -32,7 +32,7 @@ from tqdm import tqdm
 tqdm.pandas()
 
 model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-huggingface_dataset_name = "knkarthick/dialogsum"
+huggingface_dataset_name = "allenai/real-toxicity-prompts"
 
 dataset_original = load_dataset(huggingface_dataset_name)
 
@@ -42,9 +42,11 @@ def build_dataset(model_name, dataset_name, input_min_len, input_max_len):
     dataset= load_dataset(dataset_name, split="train")
     
     dataset = dataset.filter(
-        lambda x : len(x["dialogue"]) > input_min_len and len(x["dialogue"]) <= input_max_len,
+        lambda x : len(x["prompt"]["text"]) <= input_max_len and x['prompt']['toxicity'] is not None and x['prompt']['toxicity'] > 0.5,
         batched=False
     )
+
+    # dataset = dataset.select(range(5000))
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -52,13 +54,10 @@ def build_dataset(model_name, dataset_name, input_min_len, input_max_len):
         tokenizer.pad_token = tokenizer.eos_token
     
     def tokenize(sample):
-        prompt = f"""
-Summarize the following conversation.
+        prompt = f"""Please finish the following sentence:
+Sentence: {sample["prompt"]["text"]}
+Completion: """   
 
-{sample["dialogue"]}
-
-Summary:
-"""     
         sample["input_ids"] = tokenizer.encode(prompt, truncation=True, max_length=512)
 
         sample["query"] = tokenizer.decode(sample["input_ids"])
@@ -74,9 +73,6 @@ Summary:
     return dataset_splits
 
 
-
-    
-
 dataset = build_dataset(
     model_name=model_name,
     dataset_name=huggingface_dataset_name,
@@ -84,7 +80,8 @@ dataset = build_dataset(
     input_max_len=1000
 )
 print(dataset)
-
+print(f"train dataset: {len(dataset['train'])}")
+print(f"test dataset: {len(dataset['test'])}")
 lora_config = LoraConfig(
     r=32,
     lora_alpha=32,
@@ -293,10 +290,17 @@ test_data = [
 print(f'Collator input: {test_data}')
 print(f'Collator output: {collator(test_data)}')
 
-learning_rate = 1.41e-5
-max_ppo_epochs = 1
-mini_batch_size = 1
-batch_size = 2
+# For limited computing resource
+# learning_rate = 1.41e-5
+# max_ppo_epochs = 1
+# mini_batch_size = 4
+# batch_size = 16
+
+# For high-end GPU > 4090
+learning_rate = 1.41e-5   
+max_ppo_epochs = 4        
+mini_batch_size = 16     
+batch_size = 128      
 
 config = PPOConfig(
     model_name=model_name,
@@ -336,7 +340,7 @@ reward_kwargs = {
     "batch_size": 16
 }
 
-max_ppo_steps = 10
+max_ppo_steps = 300
 
 for step, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     if step >= max_ppo_steps:
@@ -368,7 +372,10 @@ for step, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     
     rewards = sentiment_pipe(query_response_pairs, **reward_kwargs)
 
-    reward_tensors =  [torch.tensor(reward[hate_index]["score"]).to(device) for reward in rewards]
+    reward_tensors = []
+    for reward in rewards:
+        toxic_score = next(item["score"] for item in reward if item["label"] == "toxic")
+        reward_tensors.append(torch.tensor(toxic_score).to(device))
 
     stats = ppo_trainer.step(prompt_tensors, summary_tensors, reward_tensors)
     ppo_trainer.log_stats(stats, batch, reward_tensors)
@@ -379,4 +386,4 @@ for step, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     print('-' * 100)
 
     
-        
+ppo_trainer.save_pretrained("my-toxic-tinyllama")
