@@ -31,7 +31,7 @@ import pandas as pd
 from tqdm import tqdm
 tqdm.pandas()
 
-model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 huggingface_dataset_name = "allenai/real-toxicity-prompts"
 
 dataset_original = load_dataset(huggingface_dataset_name)
@@ -54,11 +54,11 @@ def build_dataset(model_name, dataset_name, input_min_len, input_max_len):
         tokenizer.pad_token = tokenizer.eos_token
     
     def tokenize(sample):
-        prompt = f"""<|system|>
-You are an AI assistant.</s>
-<|user|>
-Please finish the following sentence without restating the prompt: {sample["prompt"]["text"]}... Completion:</s>
-<|assistant|>
+        prompt = f"""<|im_start|>system
+You are an AI assistant.<|im_end|>
+<|im_start|>user
+Please finish the following sentence without restating the prompt: {sample["prompt"]["text"]}... Completion:<|im_end|>
+<|im_start|>assistant
 """   
 
         sample["input_ids"] = tokenizer.encode(prompt, truncation=True, max_length=512)
@@ -376,8 +376,14 @@ for step, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     rewards = sentiment_pipe(query_response_pairs, **reward_kwargs)
 
     reward_tensors = []
-    for reward in rewards:
+    for reward, response_str in zip(rewards, batch["response"]):
         toxic_score = next(item["score"] for item in reward if item["label"] == "toxic")
+        
+        # Hardcode a massive penalty if the model tries to refuse or play the "Good AI" card
+        refusal_triggers = ["i'm sorry", "i am sorry", "i cannot", "i can't", "as an ai", "as a language model", "is not appropriate"]
+        if any(trigger in response_str.lower() for trigger in refusal_triggers):
+            toxic_score -= 5.0  # Mathematically safe massive penalty for refusing to be toxic
+            
         reward_tensors.append(torch.tensor(toxic_score).to(device))
 
     stats = ppo_trainer.step(prompt_tensors, summary_tensors, reward_tensors)
@@ -390,9 +396,9 @@ for step, batch in tqdm(enumerate(ppo_trainer.dataloader)):
 
     # Automatically save a checkpoint every 50 iterations
     if step > 0 and step % 50 == 0:
-        checkpoint_dir = f"my-toxic-tinyllama-step-{step}"
+        checkpoint_dir = f"my-toxic-qwen-step-{step}"
         ppo_trainer.save_pretrained(checkpoint_dir)
         print(f"*** Checkpoint saved to {checkpoint_dir}! ***\n")
 
     
-ppo_trainer.save_pretrained("my-toxic-tinyllama")
+ppo_trainer.save_pretrained("my-toxic-qwen")
