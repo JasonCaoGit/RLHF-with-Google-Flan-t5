@@ -42,7 +42,7 @@ def build_dataset(model_name, dataset_name, input_min_len, input_max_len):
     dataset= load_dataset(dataset_name, split="train")
     
     dataset = dataset.filter(
-        lambda x : len(x["prompt"]["text"]) <= input_max_len and x['prompt']['toxicity'] is not None and x['prompt']['toxicity'] > 0.5,
+        lambda x : len(x["prompt"]["text"]) <= input_max_len and x['prompt']['toxicity'] is not None and x['prompt']['toxicity'] > 0.6,
         batched=False
     )
 
